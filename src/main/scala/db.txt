@@ -1,0 +1,1 @@
+mysql -uunion -p123456 -h10.4.239.41 -Dspark_jobserver_test -P3306

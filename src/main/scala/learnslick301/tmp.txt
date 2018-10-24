@@ -1,0 +1,243 @@
+package worksheets
+
+import slick.driver.H2Driver.api._
+
+object slick201 {
+
+  //projection case classes 表列模版
+  case class Coffee(
+                     id: Option[Long],
+                     name: String,
+                     sup_ID: Int,
+                     price: Double,
+                     grade: Grade,
+                     total: Int
+                   )
+
+  case class Supplier(
+                       id: Option[Int],
+                       name: String,
+                       address: String,
+                       website: Option[String]
+                     )
+
+  //自定义字段
+  abstract class Grade(points: Int)
+
+  object Grade {
+
+    case object Premium extends Grade(2)
+
+    case object Quality extends Grade(1)
+
+    case object Bestbuy extends Grade(0)
+
+    def fromInt(p: Int) = p match {
+      case 2 => Premium
+      case 1 => Quality
+      case 0 => Bestbuy
+    }
+
+    def toInt(g: Grade) = g match {
+      case Premium => 2
+      case Quality => 1
+      case Bestbuy => 0
+    }
+
+    implicit val customColumn: BaseColumnType[Grade] =
+      MappedColumnType.base[Grade, Int](Grade.toInt, Grade.fromInt)
+  }
+
+  //schema 表行结构定义
+  class Coffees(tag: Tag) extends Table[Coffee](tag, "COFFEES") {
+    def id = column[Long]("COF_ID", O.AutoInc, O.PrimaryKey)
+
+    def name = column[String]("COF_NAME")
+
+    def price = column[Double]("COF_PRICE")
+
+    def supID = column[Int]("COF_SUP")
+
+    def grade = column[Grade]("COF_GRADE", O.Default(Grade.Bestbuy))
+
+    def total = column[Int]("COF_TOTAL", O.Default(0))
+
+    def * = (id.?, name, supID, price, grade, total) <> (Coffee.tupled, Coffee.unapply)
+
+    def supplier = foreignKey("SUP_FK", supID, suppliers)(_.id, onUpdate = ForeignKeyAction.Restrict, onDelete = ForeignKeyAction.Cascade)
+
+    def nameidx = index("NM_IX", name, unique = true)
+  }
+
+  val coffees = TableQuery[Coffees]
+
+  class Suppliers(tag: Tag) extends Table[Supplier](tag, "SUPPLIERS") {
+    def id = column[Int]("SUP_ID", O.PrimaryKey, O.AutoInc)
+
+    def name = column[String]("SUP_NAME")
+
+    def address = column[String]("SUP_ADDR", O.Default("-"))
+
+    def website = column[Option[String]]("SUP_WEB")
+
+    def * = (id.?, name, address, website) <> (Supplier.tupled, Supplier.unapply)
+
+    def addidx = index("ADDR_IX", (name, address), unique = true)
+  }
+
+  val suppliers = TableQuery[Suppliers]
+
+  class Bars(tag: Tag) extends Table[(Int, String)](tag, "BARS") {
+    def id = column[Int]("BAR_ID", O.AutoInc, O.PrimaryKey)
+
+    def name = column[String]("BAR_NAME")
+
+    def * = (id, name)
+  }
+
+  val bars = TableQuery[Bars]
+
+  Coffee.tupled
+  //res2: ((Option[Long], String, Int, Double, Grade, Int)) => Coffee = <function1>
+  Coffee.unapply _
+  //res3: Coffee => Option[(Option[Long], String, Int, Double, Grade, Int)] = <function1>
+
+
+  val q1 = coffees.result
+  q1.statements.head
+  //res0: String = select "COF_ID", "COF_NAME", "COF_SUP", "COF_PRICE", "COF_GRADE", "COF_TOTAL" from "COFFEES"
+
+  val q2 = coffees.map(r => (r.id, r.name)).result
+  q2.statements.head
+  //res1: String = select "COF_ID", "COF_NAME" from "COFFEES"
+
+  val q3 = (for (c <- coffees) yield (c.id, c.name)).result
+  q3.statements.head
+  //res2: String = select "COF_ID", "COF_NAME" from "COFFEES"
+
+
+  val q = coffees.filter(_.price > 100.0).map(r => (r.id, r.name)).result
+  q.statements.head
+  //res3: String = select "COF_ID", "COF_NAME" from "COFFEES" where "COF_PRICE" > 100.0
+
+  val q4 = coffees.filter(_.price > 100.0).take(4).map(_.name).result
+  q4.statements.head
+  //res4: String = select "COF_NAME" from "COFFEES" where "COF_PRICE" > 100.0 limit 4
+
+  val q5 = coffees.sortBy(_.id.desc.nullsFirst).map(_.name).drop(3).result
+  q5.statements.head
+  //res5: String = select "COF_NAME" from "COFFEES" order by "COF_ID" desc nulls first limit -1 offset 3
+
+  val q6 = for {
+    (c, s) <- coffees join suppliers on (_.supID === _.id)
+  } yield (c.id, c.name, s.name)
+  q6.result.statements.head
+  //res6: String = select x2."COF_ID", x2."COF_NAME", x3."SUP_NAME" from "COFFEES" x2, "SUPPLIERS" x3 where x2."COF_SUP" = x3."SUP_ID"
+
+  val q7 = for {
+    c <- coffees
+    s <- suppliers.filter(c.supID === _.id)
+  } yield (c.id, c.name, s.name)
+  q7.result.statements.head
+  //res7: String = select x2."COF_ID", x2."COF_NAME", x3."SUP_NAME" from "COFFEES" x2, "SUPPLIERS" x3 where x2."COF_SUP" = x3."SUP_ID"
+
+  coffees.map(_.price).max.result.statements.head
+  //res10: String = select max("COF_PRICE") from "COFFEES"
+  coffees.map(_.total).sum.result.statements.head
+  //res11: String = select sum("COF_TOTAL") from "COFFEES"
+  coffees.length.result.statements.head
+  //res12: String = select count(1) from "COFFEES"
+  coffees.filter(_.price > 100.0).exists.result.statements.head
+  //res13: String = select exists(select "COF_TOTAL", "COF_NAME", "COF_SUP", "COF_ID", "COF_PRICE", "COF_GRADE" from "COFFEES" where "COF_PRICE" > 100.0)
+  val qInsert = coffees += Coffee(Some(0), "American", 101, 56.0, Grade.Bestbuy, 0)
+  qInsert.statements.head
+  //res14: String = insert into "COFFEES" ("COF_NAME","COF_SUP","COF_PRICE","COF_GRADE","COF_TOTAL")  values (?,?,?,?,?)
+  val qInsert2 = coffees.map { r => (r.name, r.supID, r.price) } += ("Columbia", 101, 102.0)
+  qInsert2.statements.head
+  //res15: String = insert into "COFFEES" ("COF_NAME","COF_SUP","COF_PRICE")  values (?,?,?)
+  val qInsert3 = (suppliers.map { r => (r.id, r.name) }).
+    returning(suppliers.map(_.id)) += (101, "The Coffee Co.,")
+  qInsert3.statements.head
+  //res16: String = insert into "SUPPLIERS" ("SUP_NAME")  values (?)
+
+  val qDelete = coffees.filter(_.price === 0.0).delete
+  qDelete.statements.head
+  //res17: String = delete from "COFFEES" where "COFFEES"."COF_PRICE" = 0.0
+  val qUpdate = for (c <- coffees if (c.name === "American")) yield c.price
+  qUpdate.update(10.0).statements.head
+  //res18: String = update "COFFEES" set "COF_PRICE" = ? where "COFFEES"."COF_NAME" = 'American'
+
+  val initSupAction = suppliers.schema.create andThen qInsert3
+  val createCoffeeAction = coffees.schema.create
+  val insertCoffeeAction = qInsert zip qInsert2
+  val initSupAndCoffee = for {
+    _ <- initSupAction
+    _ <- createCoffeeAction
+    (i1, i2) <- insertCoffeeAction
+  } yield (i1, i2)
+
+  //先选出所有ESPRESSO开头的coffee名称，然后逐个删除
+  val delESAction = (for {
+    ns <- coffees.filter(_.name.startsWith("ESPRESSO")).map(_.name).result
+    _ <- DBIO.seq(ns.map(n => coffees.filter(_.name === n).delete): _*)
+  } yield ()).transactionally
+  //delESAction: slick.dbio.DBIOAction[Unit,slick.dbio.NoStream,slick.dbio.Effect.Read with slick.dbio.Effect.Write with slick.dbio.Effect.Transactional] = CleanUpAction(AndThenAction(Vector(slick.driver.JdbcActionComponent$StartTransaction$@6e76c850, FlatMapAction(slick.driver.JdbcActionComponent$QueryActionExtensionMethodsImpl$$anon$1@2005bce5,<function1>,scala.concurrent.impl.ExecutionContextImpl@245036ad))),<function1>,true,slick.dbio.DBIOAction$sameThreadExecutionContext$@294c4c1d)
+
+  //对一个品种价格升10%
+  def raisePriceAction(i: Long, np: Double, pc: Double) =
+    (for (c <- coffees if (c.id === i)) yield c.price).update(np * pc)
+
+  //raisePriceAction: raisePriceAction[](val i: Long,val np: Double,val pc: Double) => slick.driver.H2Driver.DriverAction[Int,slick.dbio.NoStream,slick.dbio.Effect.Write]
+  //对所有价格<100的coffee加价
+  val updatePriceAction = (for {
+    ips <- coffees.filter(_.price < 100.0).map(r => (r.id, r.price)).result
+    _ <- DBIO.seq {
+      ips.map { ip => raisePriceAction(ip._1, ip._2, 110.0) }: _*
+    }
+  } yield ()).transactionally
+  //updatePriceAction: slick.dbio.DBIOAction[Unit,slick.dbio.NoStream,slick.dbio.Effect.Read with slick.dbio.Effect.Write with slick.dbio.Effect.Transactional] = CleanUpAction(AndThenAction(Vector(slick.driver.JdbcActionComponent$StartTransaction$@6e76c850, FlatMapAction(slick.driver.JdbcActionComponent$QueryActionExtensionMethodsImpl$$anon$1@49c8a41f,<function1>,scala.concurrent.impl.ExecutionContextImpl@245036ad))),<function1>,true,slick.dbio.DBIOAction$sameThreadExecutionContext$@294c4c1d)
+
+  DBIO.successful(Supplier(Some(102), "Coffee Company", "", None))
+  //res19: slick.dbio.DBIOAction[Supplier,slick.dbio.NoStream,slick.dbio.Effect] = SuccessAction(Supplier(Some(102),Coffee Company,,None))
+
+  DBIO.failed(new Exception("oh my god..."))
+  //res20: slick.dbio.DBIOAction[Nothing,slick.dbio.NoStream,slick.dbio.Effect] = FailureAction(java.lang.Exception: oh my god...)
+
+  //示范事后处理机制，不必理会功能的具体目的
+  qInsert.andFinally(qDelete)
+  //res21: slick.dbio.DBIOAction[Int,slick.dbio.NoStream,slick.dbio.Effect.Write with slick.dbio.Effect.Write] = slick.dbio.SynchronousDatabaseAction$$anon$6@1d46b337
+
+  updatePriceAction.cleanUp(
+    { case Some(e) => initSupAction; DBIO.failed(new Exception("oh my..."))
+    case _ => qInsert3
+    }
+    , true
+  )
+  //res22: slick.dbio.DBIOAction[Unit,slick.dbio.NoStream,slick.dbio.Effect.Read with slick.dbio.Effect.Write with slick.dbio.Effect.Transactional with slick.dbio.Effect.Write] = CleanUpAction(CleanUpAction(AndThenAction(Vector(slick.driver.JdbcActionComponent$StartTransaction$@6e76c850, FlatMapAction(slick.driver.JdbcActionComponent$QueryActionExtensionMethodsImpl$$anon$1@1f7aad00,<function1>,scala.concurrent.impl.ExecutionContextImpl@245036ad))),<function1>,true,slick.dbio.DBIOAction$sameThreadExecutionContext$@294c4c1d),<function1>,true,scala.concurrent.impl.ExecutionContextImpl@245036ad)
+
+  raisePriceAction(101, 10.0, 110.0).asTry
+  //res23: slick.dbio.DBIOAction[scala.util.Try[Int],slick.dbio.NoStream,slick.dbio.Effect.Write] = slick.dbio.SynchronousDatabaseAction$$anon$9@60304a44
+
+
+  import slick.jdbc.meta.MTable
+  import scala.concurrent.ExecutionContext.Implicits.global
+  import scala.concurrent.duration.Duration
+  import scala.concurrent.{Await, Future}
+  import scala.util.{Success, Failure}
+
+  val db = Database.forURL("jdbc:h2:mem:test1;DB_CLOSE_DELAY=-1", driver = "org.h2.Driver")
+
+  def recreateCoffeeTable: Future[Unit] = {
+    db.run(MTable.getTables("Coffees")).flatMap {
+      case tables if tables.isEmpty => db.run(coffees.schema.create).andThen {
+        case Success(_) => println("coffee table created")
+        case Failure(e) => println(s"failed to create! ${e.getMessage}")
+      }
+      case _ => db.run((coffees.schema.drop andThen coffees.schema.create)).andThen {
+        case Success(_) => println("coffee table recreated")
+        case Failure(e) => println(s"failed to recreate! ${e.getMessage}")
+      }
+    }
+  }
+
+}
